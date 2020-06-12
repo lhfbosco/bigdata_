@@ -1,8 +1,14 @@
 import java.util.{Properties, UUID}
 
-import org.apache.flink.api.common.serialization.SimpleStringSchema
+import Main.{bootstrapServers, topic}
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.flink.streaming.api.scala._
-import org.apache.flink.streaming.connectors.kafka.{FlinkKafkaConsumer010}
+import org.apache.flink.streaming.api.scala.function.ProcessWindowFunction
+import org.apache.flink.streaming.api.windowing.time.Time
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow
+import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer010
+import org.apache.flink.streaming.util.serialization.JSONKeyValueDeserializationSchema
+import org.apache.flink.util.Collector
 
 object Consumer {
 
@@ -33,11 +39,25 @@ object Consumer {
     kafkaProperties.put("auto.offset.reset", "earliest")
     kafkaProperties.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
     kafkaProperties.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
-    val kafkaConsumer = new FlinkKafkaConsumer010[String](inputTopic,
-      new SimpleStringSchema, kafkaProperties)
+    val kafkaConsumer = new FlinkKafkaConsumer010[ObjectNode](topic,
+      new JSONKeyValueDeserializationSchema(false), kafkaProperties)
     kafkaConsumer.setCommitOffsetsOnCheckpoints(true)
+
     val inputKafkaStream = env.addSource(kafkaConsumer)
-    inputKafkaStream.writeUsingOutputFormat(new S3Writer(accessKey, secretKey, endpoint, bucket, keyPrefix, period))
+
+    inputKafkaStream.map(x=>(x.get("value").get("destination").asText, x.get("value").toString))
+      .keyBy(_._1)
+      .timeWindow(Time.seconds(5))
+      .process(new ProcessWindowFunction[(String, String), String, String, TimeWindow] {
+        override def process(key: String, context: Context, elements: Iterable[(String, String)], out: Collector[String]): Unit = {
+          var result = ""
+          for(e <- elements){
+            result += e._2 + "\n"
+          }
+          out.collect(result)
+        }
+      })
+      .writeUsingOutputFormat(new S3Writer(accessKey,secretKey, endpoint, bucket, keyPrefix, period))
     env.execute()
   }
 }
