@@ -36,13 +36,6 @@ object Main {
       Time.seconds(60)
     ).sum(1)
 
-//    val stream = text.flatMap {
-//      _.toLowerCase.split("\\W+") filter {
-//        _.contains(target)
-//      }
-//    }.map{
-//      ("总次数"+ count)
-
     stream.print()
     env.execute("Window Stream WordCount")
   }
